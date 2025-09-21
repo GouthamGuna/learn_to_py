@@ -11,6 +11,7 @@ class ImageUploader:
         self.client = MongoClient(db_url)
         self.db = self.client[db_name]
         self.collection = self.db[collection_name]
+        self.max_file_size = 16 * 1024 * 1024  # 16MB BSON document limit
         
     def upload_images(self, image_path):
         """
@@ -36,6 +37,15 @@ class ImageUploader:
                 file_ext = os.path.splitext(filename)[1].lower()
                 
                 if file_ext in image_extensions:
+                    # Check file size before reading
+                    file_size = os.path.getsize(file_path)
+                    max_size = 16 * 1024 * 1024  # 16MB in bytes
+                    
+                    if file_size > max_size:
+                        print(f"✗ Skipped {filename}: File size {file_size/(1024*1024):.2f}MB exceeds MongoDB's 16MB limit")
+                        error_count += 1
+                        continue
+                        
                     try:
                         # Read image file as binary
                         with open(file_path, 'rb') as image_file:
@@ -44,10 +54,11 @@ class ImageUploader:
                         # Create document for MongoDB
                         document = {
                             'filename': filename,
-                            'image_data': Binary(image_data),
+                            'image_data': Binary(image_data),  # Store as BSON Binary/BLOB
                             'upload_date': datetime.now(),
                             'file_size': len(image_data),
-                            'file_extension': file_ext
+                            'file_extension': file_ext,
+                            'size_mb': round(len(image_data)/(1024*1024), 2)  # Size in MB for reference
                         }
                         
                         # Insert into MongoDB
@@ -71,12 +82,13 @@ class ImageUploader:
         List all images currently in the collection
         """
         print("\nImages in collection:")
-        print("-" * 50)
+        print("-" * 70)
         
-        images = self.collection.find({}, {'filename': 1, 'upload_date': 1, 'file_size': 1})
+        images = self.collection.find({}, {'filename': 1, 'upload_date': 1, 'file_size': 1, 'size_mb': 1})
         
         for idx, image in enumerate(images, 1):
-            print(f"{idx}. {image['filename']} - {image['file_size']} bytes - {image['upload_date']}")
+            size_mb = image.get('size_mb', round(image['file_size']/(1024*1024), 2))
+            print(f"{idx}. {image['filename']} - {size_mb:.2f}MB ({image['file_size']} bytes) - {image['upload_date']}")
     
     def close_connection(self):
         """Close MongoDB connection"""
